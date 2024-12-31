@@ -9,6 +9,7 @@
 
 #include "json_logger.hpp"
 #include "serial.hpp"
+#include "projection.hpp"
 
 struct index {
 	long long start = 0;
@@ -25,6 +26,7 @@ struct index {
 };
 
 extern std::vector<clipbbox> clipbboxes;
+extern globalbbx global_bbox;
 
 void checkdisk(std::vector<struct reader> *r);
 

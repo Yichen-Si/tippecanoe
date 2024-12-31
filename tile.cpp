@@ -3092,7 +3092,6 @@ int traverse_zooms(int *geomfd, off_t *geom_size, char *global_stringpool, std::
 				useful_threads++;
 			}
 		}
-
 		size_t threads = CPUS;
 		if (threads > TEMP_FILES / 4) {
 			threads = TEMP_FILES / 4;
@@ -3103,7 +3102,6 @@ int traverse_zooms(int *geomfd, off_t *geom_size, char *global_stringpool, std::
 		if (threads > useful_threads) {
 			threads = useful_threads;
 		}
-
 		// Round down to a power of 2
 		for (int e = 0; e < 30; e++) {
 			if (threads >= (1U << e) && threads < (1U << (e + 1))) {

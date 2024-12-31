@@ -122,7 +122,6 @@ static long long diskfree;
 char **av;
 
 std::vector<clipbbox> clipbboxes;
-globalbbx global_bbox;
 
 void checkdisk(std::vector<struct reader> *r) {
 	long long used = 0;
@@ -1205,7 +1204,7 @@ void choose_first_zoom(long long *file_bbox, long long *file_bbox1, long long *f
 		long long right = (file_bbox[2] + buffer * shift / 256) / shift;
 		long long bottom = (file_bbox[3] + buffer * shift / 256) / shift;
 
-		if (left == right && top == bottom) { // data falls in one tile
+		if (left == right && top == bottom) {
 			*iz = z;
 			*ix = left;
 			*iy = top;
@@ -1249,13 +1248,11 @@ double round_droprate(double r) {
 std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, int maxzoom, int minzoom, int basezoom, double basezoom_marker_width, sqlite3 *outdb, const char *outdir, std::set<std::string> *exclude, std::set<std::string> *include, int exclude_all, json_object *filter, double droprate, int buffer, const char *tmpdir, double gamma, int read_parallel, int forcetable, const char *attribution, bool uses_gamma, long long *file_bbox, long long *file_bbox1, long long *file_bbox2, const char *prefilter, const char *postfilter, const char *description, bool guess_maxzoom, bool guess_cluster_maxzoom, std::unordered_map<std::string, int> const *attribute_types, const char *pgm, std::unordered_map<std::string, attribute_op> const *attribute_accum, std::map<std::string, std::string> const &attribute_descriptions, std::string const &commandline, int minimum_maxzoom) {
 	int ret = EXIT_SUCCESS;
 
-	// set up input reader and temporary file structures per CPU
 	std::vector<struct reader> readers;
 	readers.resize(CPUS);
 	for (size_t i = 0; i < CPUS; i++) {
 		struct reader *r = &readers[i];
 
-		// template for temporary file names
 		char poolname[strlen(tmpdir) + strlen("/pool.XXXXXXXX") + 1];
 		char treename[strlen(tmpdir) + strlen("/tree.XXXXXXXX") + 1];
 		char geomname[strlen(tmpdir) + strlen("/geom.XXXXXXXX") + 1];
@@ -1270,7 +1267,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		snprintf(vertexname, sizeof(vertexname), "%s%s", tmpdir, "/vertex.XXXXXXXX");
 		snprintf(nodename, sizeof(nodename), "%s%s", tmpdir, "/node.XXXXXXXX");
 
-		// generate temporary file names and get file descriptors
 		r->poolfd = mkstemp_cloexec(poolname);
 		if (r->poolfd < 0) {
 			perror(poolname);
@@ -1302,7 +1298,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 			exit(EXIT_OPEN);
 		}
 
-		// create temporary file handler
 		r->poolfile = memfile_open(r->poolfd);
 		if (r->poolfile == NULL) {
 			perror(poolname);
@@ -1355,7 +1350,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		r->file_bbox[0] = r->file_bbox[1] = UINT_MAX;
 		r->file_bbox[2] = r->file_bbox[3] = 0;
 	}
-	// check free disk space
+
 	struct statfs fsstat;
 	if (fstatfs(readers[0].geomfd, &fsstat) != 0) {
 		perror("Warning: fstatfs");
@@ -1374,34 +1369,25 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		initialized[i] = initial_x[i] = initial_y[i] = 0;
 	}
 
-	// parse each source file name and initialize layer name/info
-	std::vector<std::string> allowed_format = {
-		"json", "geojson", "geobuf", "csv", "tsv"};
 	size_t nlayers = sources.size();
 	for (size_t l = 0; l < nlayers; l++) {
-		if (sources[l].format.size() == 0) {
-			for (auto& ext : allowed_format) {
-				if (sources[l].file.size() > ext.size() + 1 && sources[l].file.substr(sources[l].file.size() - ext.size() - 1) == "." + ext) {
-					sources[l].format = ext;
-					break;
-				}
-			}
-		}
-		if (sources[l].layer.size() == 0) { // define layer name
+		if (sources[l].layer.size() == 0) {
 			const char *src;
 			if (sources[l].file.size() == 0) {
 				src = fname;
 			} else {
 				src = sources[l].file.c_str();
 			}
-			// find the file name and trim (qualified) extensions
+
+			// Find the last component of the pathname
 			const char *ocp, *use = src;
 			for (ocp = src; *ocp; ocp++) {
 				if (*ocp == '/' && ocp[1] != '\0') {
 					use = ocp + 1;
 				}
 			}
-			std::string trunc = std::string(use); // file name
+			std::string trunc = std::string(use);
+
 			std::vector<std::string> trim = {
 				".json",
 				".geojson",
@@ -1409,10 +1395,10 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				".mbtiles",
 				".pmtiles",
 				".csv",
-				".tsv",
 				".gz",
 			};
-			// Trim any of the above extensions from the file name
+
+			// Trim .json or .mbtiles from the name
 			bool again = true;
 			while (again) {
 				again = false;
@@ -1424,13 +1410,14 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				}
 			}
 
-			// Trim out characters that can't be part of selector (layer name)
+			// Trim out characters that can't be part of selector
 			std::string out;
 			for (size_t p = 0; p < trunc.size(); p++) {
 				if (isalpha(trunc[p]) || isdigit(trunc[p]) || trunc[p] == '_' || (trunc[p] & 0x80) != 0) {
 					out.append(trunc, p, 1);
 				}
 			}
+
 			sources[l].layer = out;
 			if (sources[l].layer.size() == 0 || check_utf8(out).size() != 0) {
 				sources[l].layer = "unknown" + std::to_string(l);
@@ -1468,7 +1455,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		perror("close");
 		exit(EXIT_CLOSE);
 	}
-	// process each source file; serialize to temporary files
+
 	size_t nsources = sources.size();
 	for (size_t source = 0; source < nsources; source++) {
 		std::string reading;
@@ -1493,6 +1480,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		}
 		size_t layer = a->second.id;
 
+		// geobuf
 		if (sources[source].format == "fgb" || (sources[source].file.size() > 4 && sources[source].file.substr(sources[source].file.size() - 4) == std::string(".fgb"))) {
 			struct stat st;
 			if (fstat(fd, &st) != 0) {
@@ -1639,7 +1627,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 			continue;
 		}
 
-		if (sources[source].format == "csv" || sources[source].format == "tsv" || (sources[source].file.size() > 4 && sources[source].file.substr(sources[source].file.size() - 4) == std::string(".csv"))) {
+		if (sources[source].format == "csv" || (sources[source].file.size() > 4 && sources[source].file.substr(sources[source].file.size() - 4) == std::string(".csv"))) {
 			std::atomic<long long> layer_seq[CPUS];
 			double dist_sums[CPUS];
 			size_t dist_counts[CPUS];
@@ -1679,13 +1667,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				sst[i].attribute_types = attribute_types;
 			}
 
-			// process points (row) from csv file
-			// project; spatial index; serialize to temporary files
-			if (sources[source].format == "tsv" || global_bbox.initialized) {
-				parse_geocsv2(sst, sources[source].file, layer, sources[layer].layer);
-			} else {
-				parse_geocsv(sst, sources[source].file, layer, sources[layer].layer);
-			}
+			parse_geocsv(sst, sources[source].file, layer, sources[layer].layer);
 
 			if (close(fd) != 0) {
 				perror("close");
@@ -1697,15 +1679,12 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 			continue;
 		}
 
-		// following is only for GeoJSON
-
 		struct stat st;
 		char *map = NULL;
 		off_t off = 0;
 
-		// read input in parallel only if it is GeoJSON
 		int read_parallel_this = read_parallel ? '\n' : 0;
-		// map the entire file in memory
+
 		if (!(sources[source].file.size() > 3 && sources[source].file.substr(sources[source].file.size() - 3) == std::string(".gz"))) {
 			if (fstat(fd, &st) == 0) {
 				off = lseek(fd, 0, SEEK_CUR);
@@ -1718,9 +1697,9 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				}
 			}
 		}
-		// check geojson file, identify record separator
+
 		if (map != NULL && map != MAP_FAILED && st.st_size - off > 0) {
-			if (map[0] == 0x1E) { // geojson record separator
+			if (map[0] == 0x1E) {
 				read_parallel_this = 0x1E;
 			}
 
@@ -1735,7 +1714,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				map = NULL;
 			}
 		}
-		// process chunks of the input file in parallel
+
 		if (map != NULL && map != MAP_FAILED && read_parallel_this) {
 			do_read_parallel(map, st.st_size - off, overall_offset, reading.c_str(), &readers, &progress_seq, exclude, include, exclude_all, basezoom, layer, &layermaps, initialized, initial_x, initial_y, maxzoom, sources[layer].layer, uses_gamma, attribute_types, read_parallel_this, &dist_sum, &dist_count, &area_sum, guess_maxzoom, prefilter != NULL || postfilter != NULL);
 			overall_offset += st.st_size - off;
@@ -1750,7 +1729,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				perror("close input file");
 				exit(EXIT_CLOSE);
 			}
-		} else { // Serial reading and parallel/serial processing
+		} else {
 			STREAM *fp = streamfdopen(fd, "r", sources[layer].file);
 			if (fp == NULL) {
 				perror(sources[layer].file.c_str());
@@ -1771,7 +1750,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 
 				char readname[strlen(tmpdir) + strlen("/read.XXXXXXXX") + 1];
 				snprintf(readname, sizeof(readname), "%s%s", tmpdir, "/read.XXXXXXXX");
-				int readfd = mkstemp_cloexec(readname); // temp file
+				int readfd = mkstemp_cloexec(readname);
 				if (readfd < 0) {
 					perror(readname);
 					exit(EXIT_OPEN);
@@ -1781,10 +1760,10 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 					perror(readname);
 					exit(EXIT_OPEN);
 				}
-				unlink(readname); // remove directory entry, file remains open
+				unlink(readname);
 
 				std::atomic<int> is_parsing(0);
-				long long ahead = 0; // buffer size
+				long long ahead = 0;
 				long long initial_offset = overall_offset;
 				pthread_t parallel_parser;
 				bool parser_created = false;
@@ -1796,20 +1775,17 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				char buf[READ_BUF];
 				int n;
 
-				// Read data in small chunks and write to the temp file
-				// Parallel processing a big chunk periodically
 				while ((n = fp->read(buf, READ_BUF)) > 0) {
 					std::atomic<long long> readingpos;
 					fwrite_check(buf, sizeof(char), n, readfp, &readingpos, reading.c_str());
 					ahead += n;
-					// why would buf ends with a separator? is it a bug?
+
 					if (buf[n - 1] == read_parallel_this && ahead > PARSE_MIN) {
 						// Don't let the streaming reader get too far ahead of the parsers.
 						// If the buffered input gets huge, even if the parsers are still running,
 						// wait for the parser thread instead of continuing to stream input.
 
 						if (is_parsing == 0 || ahead >= PARSE_MAX) {
-							// pthread_join blocks until parser thread completes
 							if (parser_created) {
 								if (pthread_join(parallel_parser, NULL) != 0) {
 									perror("pthread_join 1088");
@@ -1817,7 +1793,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 								}
 								parser_created = false;
 							}
-							// start new parser thread (with multiple workers)
+
 							fflush(readfp);
 							start_parsing(readfd, streamfpopen(readfp), initial_offset, ahead, &is_parsing, &parallel_parser, parser_created, reading.c_str(), &readers, &progress_seq, exclude, include, exclude_all, basezoom, layer, layermaps, initialized, initial_x, initial_y, maxzoom, sources[layer].layer, gamma != 0, attribute_types, read_parallel_this, &dist_sum, &dist_count, &area_sum, guess_maxzoom, prefilter != NULL || postfilter != NULL);
 
@@ -1825,7 +1801,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 							overall_offset += ahead;
 							checkdisk(&readers);
 							ahead = 0;
-							// temp file is deleted after parser thread finishes
+
 							snprintf(readname, sizeof(readname), "%s%s", tmpdir, "/read.XXXXXXXX");
 							readfd = mkstemp_cloexec(readname);
 							if (readfd < 0) {
@@ -1909,7 +1885,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 				exit(EXIT_CLOSE);
 			}
 		}
-	} // Finish reading input files
+	}
 
 	int files_open_after_reading = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	if (files_open_after_reading < 0) {
@@ -1920,11 +1896,13 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		perror("close");
 		exit(EXIT_CLOSE);
 	}
+
 	if (files_open_after_reading > files_open_before_reading) {
 		fprintf(stderr, "Internal error: Files left open after reading input. (%d vs %d)\n",
 			files_open_before_reading, files_open_after_reading);
 		ret = EXIT_IMPOSSIBLE;
 	}
+
 	if (!quiet) {
 		fprintf(stderr, "                              \r");
 		//     (stderr, "Read 10000.00 million features\r", *progress_seq / 1000000.0);
@@ -1934,7 +1912,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	std::atomic<long long> vertexpos(0);
 	std::atomic<long long> nodepos(0);
 
-	for (size_t i = 0; i < CPUS; i++) { // close temporary files for geometries
+	for (size_t i = 0; i < CPUS; i++) {
 		if (fclose(readers[i].geomfile) != 0) {
 			perror("fclose geom");
 			exit(EXIT_CLOSE);
@@ -1957,7 +1935,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	if (!quiet) {
 		fprintf(stderr, "Merging string pool           \r");
 	}
-	// Merge keys from temporary poolfile created by each thread
+
 	// Create a combined string pool
 	// but keep track of the offsets into it since we still need
 	// segment+offset to find the data.
@@ -2036,7 +2014,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		perror("fclose pool");
 		exit(EXIT_CLOSE);
 	}
-	// Merged string pool (of keys)
+
 	char *stringpool = NULL;
 	if (poolpos > 0) {  // Will be 0 if -X was specified
 		stringpool = (char *) mmap(NULL, poolpos, PROT_READ, MAP_PRIVATE, poolfd, 0);
@@ -2047,7 +2025,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		madvise(stringpool, poolpos, MADV_RANDOM);
 	}
 
-	// (?) Merge & sort vertices (polygon/line) that could be simplified away
 	if (!quiet) {
 		fprintf(stderr, "Merging vertices              \r");
 	}
@@ -2108,8 +2085,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		fclose(vertex_out);
 	}
 
-	// Merge & sort shared nodes that can't be simplified away;
-	// scan the list to remove duplicates
 	if (!quiet) {
 		fprintf(stderr, "Merging nodes                 \r");
 	}
@@ -2117,9 +2092,12 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	std::string shared_nodes_bloom;
 	shared_nodes_bloom.resize(34567891);  // circa 34MB, size nowhere near a power of 2
 
+	// Sort nodes that can't be simplified away; scan the list to remove duplicates
+
 	FILE *shared_nodes;
 	node *shared_nodes_map = NULL;	// will be null if there are no shared nodes
-	{ // merge & sort
+	{
+		// sort
 
 		std::string tmpname = std::string(tmpdir) + "/node2.XXXXXX";
 		int nodefd = mkstemp((char *) tmpname.c_str());
@@ -2207,7 +2185,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		fclose(node_out);
 	}
 
-	/* Prepare for Tile Generation */
 	if (!quiet) {
 		fprintf(stderr, "Merging index                 \r");
 	}
@@ -2225,10 +2202,12 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		perror(indexname);
 		exit(EXIT_OPEN);
 	}
+
 	unlink(indexname);
 
 	char geomname[strlen(tmpdir) + strlen("/geom.XXXXXXXX") + 1];
 	snprintf(geomname, sizeof(geomname), "%s%s", tmpdir, "/geom.XXXXXXXX");
+
 	int geomfd = mkstemp_cloexec(geomname);
 	if (geomfd < 0) {
 		perror(geomname);
@@ -2241,11 +2220,10 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	}
 	unlink(geomname);
 
-	// find the first zoom level where all data fall in one tile
-	// file_bbox: minx (left), miny (top), maxx (right), maxy (bottom)
 	unsigned iz = 0, ix = 0, iy = 0;
 	choose_first_zoom(file_bbox, file_bbox1, file_bbox2, readers, &iz, &ix, &iy, minzoom, buffer);
-	if (justx >= 0) { // requested a single tile
+
+	if (justx >= 0) {
 		iz = minzoom;
 		ix = justx;
 		iy = justy;
@@ -2260,7 +2238,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	serialize_uint(geomfile, ix, &geompos, fname);
 	serialize_uint(geomfile, iy, &geompos, fname);
 
-	// split, sort, then merge geometries based on indices
 	radix(readers, CPUS, geomfile, indexfile, tmpdir, &geompos, maxzoom, basezoom, droprate, gamma);
 
 	/* end of tile */
@@ -2272,6 +2249,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		perror("pwrite estimated complexity");
 		exit(EXIT_WRITE);
 	}
+
 	if (fclose(geomfile) != 0) {
 		perror("fclose geom");
 		exit(EXIT_CLOSE);
@@ -2528,10 +2506,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		fprintf(stderr, "Choosing a cluster maxzoom of -k%d to make all features visible at maximum zoom %d\n", cluster_maxzoom, maxzoom);
 	}
 
-	// choose basezoom as the highest zoom level to start droppint feature
-	// (max tile density exceeds the threshold)
-	// choose droprate to constrain the number of features in the densest tile at each zoom level
-	// (start from basezoom, fraction to keep at z: droprate^{-(basezoom-z)} )
 	if (basezoom < 0 || droprate < 0) {
 		struct tile {
 			unsigned x;
@@ -2542,7 +2516,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 			unsigned long long previndex;
 		} tile[MAX_ZOOM + 1], max[MAX_ZOOM + 1];
 
-		{ // init
+		{
 			int z;
 			for (z = 0; z <= MAX_ZOOM; z++) {
 				tile[z].x = tile[z].y = tile[z].count = tile[z].fullcount = tile[z].gap = tile[z].previndex = 0;
@@ -2552,7 +2526,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 
 		long long progress = -1;
 
-		// count the number of features per tile at all zoom levels
 		long long ip;
 		for (ip = 0; ip < indices; ip++) {
 			unsigned xx, yy;
@@ -2602,7 +2575,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 			}
 		}
 
-		// find the highest zoom level where the densest tile contains < max_features
 		int z;
 		for (z = MAX_ZOOM; z >= 0; z--) {
 			if (tile[z].count > max[z].count) {
@@ -2633,7 +2605,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 			basezoom = maxzoom;
 		}
 
-		// choose droprate
 		if (obasezoom < 0 && basezoom > maxzoom) {
 			fprintf(stderr, "Couldn't find a suitable base zoom. Working from the other direction.\n");
 			if (gamma == 0) {
@@ -2662,11 +2633,10 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 			if (!quiet) {
 				fprintf(stderr, "Choosing a base zoom of -B%d to keep %f features in tile %d/%u/%u.\n", basezoom, max[maxzoom].count * exp(log(droprate) * (maxzoom - basezoom)), maxzoom, max[maxzoom].x, max[maxzoom].y);
 			}
-		} else if (droprate < 0) { // basezoom level is found
+		} else if (droprate < 0) {
 			droprate = 1;
 
 			for (z = basezoom - 1; z >= 0; z--) {
-				// fraction of features given the current droprate
 				double interval = exp(log(droprate) * (basezoom - z));
 
 				if (max[z].count / interval >= max_features) {
@@ -2794,7 +2764,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		perror("close sorted index");
 	}
 
-	/* Tile Generation */
 	/* Traverse and split the geometries for each zoom level */
 
 	struct stat geomst;
@@ -2839,18 +2808,21 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	if (close(poolfd) < 0) {
 		perror("close pool");
 	}
-	fclose(shared_nodes);
 
-	/* Final output */
+	fclose(shared_nodes);
 
 	// mbtiles-style bounding box and center
 	double minlat = 0, minlon = 0, maxlat = 0, maxlon = 0, midlat = 0, midlon = 0;
+
 	tile2lonlat(midx, midy, maxzoom, &minlon, &maxlat);
 	tile2lonlat(midx + 1, midy + 1, maxzoom, &maxlon, &minlat);
+
 	midlat = (maxlat + minlat) / 2;
 	midlon = (maxlon + minlon) / 2;
+
 	tile2lonlat(file_bbox[0], file_bbox[1], 32, &minlon, &maxlat);
 	tile2lonlat(file_bbox[2], file_bbox[3], 32, &maxlon, &minlat);
+
 	if (midlat < minlat) {
 		midlat = minlat;
 	}
@@ -2874,12 +2846,14 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		tile2lonlat(file_bbox1[0], file_bbox1[1], 32, &minlon2, &maxlat2);
 		tile2lonlat(file_bbox1[2], file_bbox1[3], 32, &maxlon2, &minlat2);
 	}
-	// collect layer stats and generate pmtiles/mbtile metadata
+
 	std::map<std::string, layermap_entry> merged_lm = merge_layermaps(layermaps);
+
 	for (auto ai = merged_lm.begin(); ai != merged_lm.end(); ++ai) {
 		ai->second.minzoom = minzoom;
 		ai->second.maxzoom = maxzoom;
 	}
+
 	metadata m = make_metadata(fname, minzoom, maxzoom, minlat, minlon, maxlat, maxlon, minlat2, minlon2, maxlat2, maxlon2, midlat, midlon, attribution, merged_lm, true, description, !prevent[P_TILE_STATS], attribute_descriptions, "tippecanoe", commandline, strategies, basezoom, droprate, retain_points_multiplier);
 	if (outdb != NULL) {
 		mbtiles_write_metadata(outdb, m, forcetable);
@@ -3030,7 +3004,7 @@ int main(int argc, char **argv) {
 	init_cpus();
 
 	extern int optind;
-	extern char *optarg; // getopt.h
+	extern char *optarg;
 	int i;
 
 	char *name = NULL;
@@ -3056,7 +3030,6 @@ int main(int argc, char **argv) {
 	bool guess_maxzoom = false;
 	int minimum_maxzoom = 0;
 	bool guess_cluster_maxzoom = false;
-	std::string coordinate_system;
 
 	std::set<std::string> exclude, include;
 	std::unordered_map<std::string, int> attribute_types;
@@ -3074,7 +3047,6 @@ int main(int argc, char **argv) {
 		additional[i] = 0;
 	}
 
-	// Parse options
 	static struct option long_options_orig[] = {
 		{"Output tileset", 0, 0, 0},
 		{"output", required_argument, 0, 'o'},
@@ -3180,7 +3152,6 @@ int main(int argc, char **argv) {
 		{"buffer", required_argument, 0, 'b'},
 		{"no-clipping", no_argument, &prevent[P_CLIPPING], 1},
 		{"no-duplication", no_argument, &prevent[P_DUPLICATION], 1},
-		{"global-bounding-box", required_argument, 0, '~'},
 
 		{"Reordering features within each tile", 0, 0, 0},
 		{"preserve-input-order", no_argument, &prevent[P_INPUT_ORDER], 1},
@@ -3188,7 +3159,6 @@ int main(int argc, char **argv) {
 		{"coalesce", no_argument, &additional[A_COALESCE], 1},
 		{"reverse", no_argument, &additional[A_REVERSE], 1},
 		{"hilbert", no_argument, &additional[A_HILBERT], 1},
-		{"hilbert-lut", no_argument, &additional[A_HILBERT_LUT], 1},
 		{"order-by", required_argument, 0, '~'},
 		{"order-descending-by", required_argument, 0, '~'},
 		{"order-smallest-first", no_argument, 0, '~'},
@@ -3305,13 +3275,6 @@ int main(int argc, char **argv) {
 					clipbboxes.push_back(clip);
 				} else {
 					fprintf(stderr, "%s: Can't parse bounding box --%s=%s\n", argv[0], opt, optarg);
-					exit(EXIT_ARGS);
-				}
-			} else if (strcmp(opt, "global-bounding-box") == 0) {
-				if (sscanf(optarg, "%lf,%lf,%lf,%lf", &global_bbox.minx, &global_bbox.miny, &global_bbox.maxx, &global_bbox.maxy) == 4) {
-					global_bbox.set_scale();
-				} else {
-					fprintf(stderr, "%s: Can't parse global bounding box --%s=%s\n", argv[0], opt, optarg);
 					exit(EXIT_ARGS);
 				}
 			} else if (strcmp(opt, "use-attribute-for-id") == 0) {
@@ -3668,7 +3631,6 @@ int main(int argc, char **argv) {
 			break;
 
 		case 's':
-			coordinate_system = optarg;
 			set_projection_or_exit(optarg);
 			break;
 
@@ -3744,13 +3706,9 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	// Choose spatial indexing function
 	if (additional[A_HILBERT]) {
 		encode_index = encode_hilbert;
 		decode_index = decode_hilbert;
-	} else if (additional[A_HILBERT_LUT]) {
-		encode_index = encode_hilbert2;
-		decode_index = decode_hilbert2;
 	} else {
 		encode_index = encode_quadkey;
 		decode_index = decode_quadkey;
@@ -3759,27 +3717,9 @@ int main(int argc, char **argv) {
 	// Wait until here to project the bounding box, so that the behavior is
 	// the same no matter what order the projection and bounding box are
 	// specified in
-
-	// Convert bounding box coord to tile coord at the original resolution
-	if (coordinate_system.compare("Euclidean") == 0) {
-		if (global_bbox.initialized) {
-			// shift and scale (lon, lat) to [0, 2^32-1] x [0, 2^32-1]
-			for (auto &c : clipbboxes) {
-				global_bbox.project2tile32(c.lon1, c.lat1, &c.minx, &c.miny);
-				global_bbox.project2tile32(c.lon2, c.lat2, &c.maxx, &c.maxy);
-			}
-		} else { // assuming input coordinates are in [0, 2^32-1] x [0, 2^32-1]
-			for (auto &c : clipbboxes) {
-				projection->project(c.lon1, c.lat1, 32, &c.minx, &c.miny);
-				projection->project(c.lon2, c.lat2, 32, &c.maxx, &c.maxy);
-			}
-		}
-	} else {
-		// projection->project called either lonlat2tile or epsg3857totile
-		for (auto &c : clipbboxes) {
-			projection->project(c.lon1, c.lat1, 32, &c.minx, &c.maxy);
-			projection->project(c.lon2, c.lat2, 32, &c.maxx, &c.miny);
-		}
+	for (auto &c : clipbboxes) {
+		projection->project(c.lon1, c.lat1, 32, &c.minx, &c.maxy);
+		projection->project(c.lon2, c.lat2, 32, &c.maxx, &c.miny);
 	}
 
 	if (max_tilestats_sample_values < max_tilestats_values) {
@@ -3788,7 +3728,6 @@ int main(int argc, char **argv) {
 
 	signal(SIGPIPE, SIG_IGN);
 
-	// check if open and close work as expected
 	files_open_at_start = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	if (files_open_at_start < 0) {
 		perror("open /dev/null");
@@ -3799,8 +3738,6 @@ int main(int argc, char **argv) {
 		exit(EXIT_CLOSE);
 	}
 
-	// check zoom and detail parameters
-	// detail: number of grid cells within a tile
 	if (full_detail <= 0) {
 		full_detail = 12;
 	}
@@ -3851,8 +3788,6 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	// geometry_scale: 0 for using the original resolution;
-	// >0 for binning since even the maxzoom does not need the full resolution
 	if (extra_detail >= 0 || prevent[P_SIMPLIFY_SHARED_NODES] || additional[A_EXTEND_ZOOMS] || extend_zooms_max > 0) {
 		geometry_scale = 0;
 	} else {
@@ -3866,7 +3801,6 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	// gamma: reduce dots less than a pixel apart
 	if ((basezoom < 0 || droprate < 0) && (gamma < 0)) {
 		// Can't use randomized (as opposed to evenly distributed) dot dropping
 		// if rate and base aren't known during feature reading.
@@ -3874,7 +3808,6 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "Forcing -g0 since -B or -r is not known\n");
 	}
 
-	// check & open output mbtiles/pmtiles file
 	if (out_mbtiles == NULL && out_dir == NULL) {
 		fprintf(stderr, "%s: must specify -o out.mbtiles or -e directory\n", argv[0]);
 		exit(EXIT_ARGS);
@@ -3902,7 +3835,6 @@ int main(int argc, char **argv) {
 
 	int ret = EXIT_SUCCESS;
 
-	// input source (file/stdin; potentially one file per layer)
 	for (i = optind; i < argc; i++) {
 		struct source src;
 		src.layer = "";
@@ -3928,7 +3860,6 @@ int main(int argc, char **argv) {
 	long long file_bbox1[4] = {0xFFFFFFFF, 0xFFFFFFFF, 0, 0};	      // standard -180 to 180 world plane
 	long long file_bbox2[4] = {0x1FFFFFFFF, 0xFFFFFFFF, 0x100000000, 0};  // 0 to 360 world plane
 
-	// major process. write to final pmtiles/mbtiles
 	auto input_ret = read_input(sources, name ? name : out_mbtiles ? out_mbtiles
 								       : out_dir,
 				    maxzoom, minzoom, basezoom, basezoom_marker_width, outdb, out_dir, &exclude, &include, exclude_all, filter, droprate, buffer, tmpdir, gamma, read_parallel, forcetable, attribution, gamma != 0, file_bbox, file_bbox1, file_bbox2, prefilter, postfilter, description, guess_maxzoom, guess_cluster_maxzoom, &attribute_types, argv[0], &attribute_accum, attribute_descriptions, commandline, minimum_maxzoom);
@@ -3959,7 +3890,7 @@ int main(int argc, char **argv) {
 	}
 
 	return ret;
- } // end of main
+}
 
 int mkstemp_cloexec(char *name) {
 	int fd = mkstemp(name);

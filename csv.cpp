@@ -2,7 +2,7 @@
 #include "text.hpp"
 #include "errors.hpp"
 
-std::vector<std::string> csv_split(const char *s) {
+std::vector<std::string> csv_split(const char *s, char delimiter) {
 	std::vector<std::string> ret;
 
 	while (*s && *s != '\n' && *s != '\r') {
@@ -14,7 +14,7 @@ std::vector<std::string> csv_split(const char *s) {
 				within = !within;
 			}
 
-			if (*s == ',' && !within) {
+			if (*s == delimiter && !within) {
 				break;
 			}
 		}
@@ -22,7 +22,7 @@ std::vector<std::string> csv_split(const char *s) {
 		std::string v = std::string(start, s - start);
 		ret.push_back(v);
 
-		if (*s == ',') {
+		if (*s == delimiter) {
 			s++;
 
 			while (*s && isspace(*s)) {

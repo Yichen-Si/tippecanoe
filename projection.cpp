@@ -4,6 +4,8 @@
 #include <math.h>
 #include <cmath>
 #include <atomic>
+#include <limits>
+#include <assert.h>
 #include "projection.hpp"
 #include "errors.hpp"
 
@@ -13,6 +15,7 @@ void (*decode_index)(unsigned long long index, unsigned *wx, unsigned *wy) = NUL
 struct projection projections[] = {
 	{"EPSG:4326", lonlat2tile, tile2lonlat, "urn:ogc:def:crs:OGC:1.3:CRS84"},
 	{"EPSG:3857", epsg3857totile, tiletoepsg3857, "urn:ogc:def:crs:EPSG::3857"},
+	{"Euclidean", euclidean2tile, tile2euclidean, "euclidean32"},
 	{NULL, NULL, NULL, NULL},
 };
 
@@ -73,7 +76,7 @@ void tile2lonlat(long long x, long long y, int zoom, double *lon, double *lat) {
 
 void epsg3857totile(double ix, double iy, int zoom, long long *x, long long *y) {
 	// Place infinite and NaN coordinates off the edge of the Mercator plane
-
+	// input are in meters fro mthe origin
 	int iy_class = std::fpclassify(iy);
 	int ix_class = std::fpclassify(ix);
 
@@ -83,7 +86,8 @@ void epsg3857totile(double ix, double iy, int zoom, long long *x, long long *y) 
 	if (ix_class == FP_INFINITE || ix_class == FP_NAN) {
 		ix = 40000000.0;
 	}
-
+	// normalize (input range is ~(-R\pi, R\pi) ) -> (0, 2^32)
+	// x/(R*pi) * 2^31 + 2^31 (scaled w.r.t. circumference then shift to positive)
 	*x = std::round(ix * (1LL << 31) / 6378137.0 / M_PI + (1LL << 31));
 	*y = std::round(((1LL << 32) - 1) - (iy * (1LL << 31) / 6378137.0 / M_PI + (1LL << 31)));
 
@@ -220,4 +224,110 @@ void set_projection_or_exit(const char *optarg) {
 
 unsigned long long encode_vertex(unsigned int wx, unsigned int wy) {
 	return (((unsigned long long) wx) << 32) | wy;
+}
+
+unsigned long long encode_hilbert2(uint32_t x, uint32_t y) {
+	uint8_t order = 32;
+	// Calculate effective bits needed
+	const uint32_t coord_bits = 32;
+	const uint32_t useless_bits = (((x | y) == 0) ? 32 : __builtin_clz(x | y)) & ~1;
+	const uint8_t lowest_order = (coord_bits - useless_bits) + (order & 1);
+
+	uint64_t result = 0;
+	uint8_t state = 0;
+	int8_t shift_factor = lowest_order - 3;
+
+	// Process 3 bits at a time
+	while (shift_factor > 0) {
+		uint8_t x_in = ((x >> shift_factor) & 7) << 3;
+		uint8_t y_in = (y >> shift_factor) & 7;
+		uint8_t index = x_in | y_in | state;
+
+		uint8_t r = LUT_XY2H[index];
+		state = r & 0xC0;  // Top 2 bits for next state
+		uint64_t hhh = r & 0x3F;  // Bottom 6 bits for Hilbert value
+
+		result |= (hhh << (shift_factor * 2));
+		shift_factor -= 3;
+	}
+
+	// Handle remaining bits
+	shift_factor *= -1;
+	uint8_t x_in = ((x << shift_factor) & 7) << 3;
+	uint8_t y_in = (y << shift_factor) & 7;
+	uint8_t index = x_in | y_in | state;
+
+	uint8_t r = LUT_XY2H[index];
+	uint64_t hhh = r & 0x3F;
+	result |= (hhh >> (shift_factor * 2));
+
+	return result;
+}
+
+void decode_hilbert2(unsigned long long h, uint32_t *x, uint32_t *y) {
+	uint8_t order = 32;
+    const uint32_t coord_bits = 32;
+    const uint32_t useless_bits = ((h ? __builtin_clzll(h) : 64) >> 1) & ~1;
+    const uint8_t lowest_order = coord_bits - useless_bits + (order & 1);
+
+    *x = 0, *y = 0;
+    uint8_t state = 0;
+    int8_t shift_factor = lowest_order - 3;
+
+    // Process 3 bits at a time
+    while (shift_factor > 0) {
+        uint8_t h_in = (h >> (shift_factor << 1)) & 0x3F;
+        uint8_t r = LUT_H2XY[state | h_in];
+
+        state = r & 0xC0;
+        uint32_t xxx = (r >> 3) & 7;
+        uint32_t yyy = r & 7;
+
+        *x |= xxx << shift_factor;
+        *y |= yyy << shift_factor;
+        shift_factor -= 3;
+    }
+
+    // Handle remaining bits
+    shift_factor *= -1;
+    uint8_t h_in = (h << (shift_factor * 2)) & 0x3F;
+    uint8_t r = LUT_H2XY[state | h_in];
+
+    uint32_t xxx = (r >> 3) & 7;
+    uint32_t yyy = r & 7;
+
+    *x = (xxx >> shift_factor) | *x;
+    *y = (yyy >> shift_factor) | *y;
+}
+
+void euclidean2tile(double x, double y, int zoom, long long *ox, long long *oy) {
+	assert (x >= 0 && y >= 0);
+	// should accept extra parameters for the bounds
+	double dmax = (double) std::numeric_limits<uint32_t>::max();
+
+    // Place infinite and NaN coordinates at maximum bounds
+    int x_class = std::fpclassify(x);
+    int y_class = std::fpclassify(y);
+    if (x_class == FP_INFINITE || x_class == FP_NAN) {
+        x = dmax;
+    }
+    if (y_class == FP_INFINITE || y_class == FP_NAN) {
+        y = dmax;
+    }
+
+    long long n = 1LL << zoom;
+    *ox = std::round(n * (x/dmax));
+    *oy = std::round(n * (y/dmax));
+
+    // Ensure coordinates are within bounds
+    if (*ox < 0) *ox = 0;
+    if (*oy < 0) *oy = 0;
+    if (*ox >= n) *ox = n - 1;
+    if (*oy >= n) *oy = n - 1;
+}
+
+void tile2euclidean(long long x, long long y, int zoom, double *ox, double *oy) {
+    long long n = 1LL << zoom;
+    *ox = 1. * x / n * std::numeric_limits<uint32_t>::max();
+    *oy = 1. * y / n * std::numeric_limits<uint32_t>::max();
 }
