@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package pointcloud;
+
+// Top-level message containing schema and data
+message PointCloudDiscrete {
+
+    message CoordinateSystem {
+        string name = 1;
+        string units = 2;
+        bool is_3d = 3;
+        bool index_only = 4; // Only store points' indoces not coordinates
+        repeated double transform_matrix = 5;
+        repeated double shift_vector = 6;
+    }
+
+    message Attribute { // a single column
+        string name = 1;
+        oneof type {
+            ScalarType scalar = 2;
+            CategoryType category = 3;
+        }
+    }
+
+    message ScalarType {
+        enum Type {
+            INT32 = 0;
+            INT64 = 1;
+            FLOAT = 2;
+            DOUBLE = 3;
+            BOOL = 4;
+        }
+        Type type = 1;
+    }
+
+    message CategoryType { // Dictionary
+        repeated string values = 1;
+    }
+
+    CoordinateSystem coordinate_system = 1;
+    repeated Attribute attributes = 2; // Define all attributes in order
+    repeated PointData points = 3;
+
+    message PointData {
+        uint64 id = 1;
+        uint32 x = 2;
+        uint32 y = 3;
+        optional uint32 z = 4;
+        repeated AttributeValue values = 5; // same order as attributes
+    }
+
+    // Value for a single attribute
+    message AttributeValue {
+        oneof value {
+            int32 int32_value = 1;
+            int64 int64_value = 2;
+            float float_value = 3;
+            double double_value = 4;
+            bool bool_value = 5;
+            uint32 category_index = 6;  // Index into the category's dictionary
+        }
+    }
+}

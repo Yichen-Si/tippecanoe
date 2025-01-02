@@ -748,8 +748,11 @@ void start_parsing(int fd, STREAM *fp, long long offset, long long len, std::ato
 }
 
 void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int splits, long long mem, const char *tmpdir, long long *availfiles, FILE *geomfile, FILE *indexfile, std::atomic<long long> *geompos_out, long long *progress, long long *progress_max, long long *progress_reported, int maxzoom, int basezoom, double droprate, double gamma, struct drop_state *ds) {
+	// parameters unused: basezoom, droprate
+	// if gamma is not in use, maxzoom, gamma, ds are also unused
+
 	// Arranged as bits to facilitate subdividing again if a subdivided file is still huge
-	int splitbits = log(splits) / log(2);
+	int splitbits = log(splits) / log(2); // bits used for splitting at this level (prefix is the number of bits already used in previous levels)
 	splits = 1 << splitbits;
 
 	FILE *geomfiles[splits];
@@ -759,7 +762,7 @@ void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int split
 	std::atomic<long long> sub_geompos[splits];
 
 	int i;
-	for (i = 0; i < splits; i++) {
+	for (i = 0; i < splits; i++) { // output streams
 		sub_geompos[i] = 0;
 
 		char geomname[strlen(tmpdir) + strlen("/geom.XXXXXXXX") + 1];
@@ -795,6 +798,7 @@ void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int split
 		unlink(indexname);
 	}
 
+	// distribute date from n readers to _splits_ temporary files
 	for (i = 0; i < inputs; i++) {
 		struct stat geomst, indexst;
 		if (fstat(geomfds_in[i], &geomst) < 0) {
@@ -868,7 +872,6 @@ void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int split
 
 		*availfiles += 2;
 	}
-
 	for (i = 0; i < splits; i++) {
 		if (fclose(geomfiles[i]) != 0) {
 			perror("fclose geom");
@@ -882,6 +885,7 @@ void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int split
 		*availfiles += 2;
 	}
 
+	// sort within each split (the splits are sorted)
 	for (i = 0; i < splits; i++) {
 		int already_closed = 0;
 
@@ -896,7 +900,7 @@ void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int split
 		}
 
 		if (indexst.st_size > 0) {
-			if (indexst.st_size + geomst.st_size < mem) {
+			if (indexst.st_size + geomst.st_size < mem) { // fit in mem, sort in parallel and merge
 				std::atomic<long long> indexpos(indexst.st_size);
 				int bytes = sizeof(struct index);
 
@@ -978,7 +982,7 @@ void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int split
 					perror("unmap geom");
 					exit(EXIT_MEMORY);
 				}
-			} else if (indexst.st_size == sizeof(struct index) || prefix + splitbits >= 64) {
+			} else if (indexst.st_size == sizeof(struct index) || prefix + splitbits >= 64) { // exactly one index entry or no more info for splitting, write directly
 				struct index *indexmap = (struct index *) mmap(NULL, indexst.st_size, PROT_READ, MAP_PRIVATE, indexfds[i], 0);
 				if (indexmap == MAP_FAILED) {
 					fprintf(stderr, "fd %lld, len %lld\n", (long long) indexfds[i], (long long) indexst.st_size);
@@ -1027,7 +1031,7 @@ void radix1(int *geomfds_in, int *indexfds_in, int inputs, int prefix, int split
 					perror("unmap geom");
 					exit(EXIT_MEMORY);
 				}
-			} else {
+			} else { // split further
 				// We already reported the progress from splitting this radix out
 				// but we need to split it again, which will be credited with more
 				// progress. So increase the total amount of progress to report by
@@ -2048,12 +2052,10 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	}
 
 	// (?) Merge & sort vertices (polygon/line) that could be simplified away
+	// find nodes where the same central point is part of two different vertices
 	if (!quiet) {
 		fprintf(stderr, "Merging vertices              \r");
 	}
-
-	// Sort the vertices;
-	// find nodes where the same central point is part of two different vertices
 	{
 		std::string tmpname = std::string(tmpdir) + "/vertex2.XXXXXX";
 		int vertexfd = mkstemp((char *) tmpname.c_str());
@@ -2214,7 +2216,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 
 	char indexname[strlen(tmpdir) + strlen("/index.XXXXXXXX") + 1];
 	snprintf(indexname, sizeof(indexname), "%s%s", tmpdir, "/index.XXXXXXXX");
-
 	int indexfd = mkstemp_cloexec(indexname);
 	if (indexfd < 0) {
 		perror(indexname);
@@ -2245,6 +2246,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	// file_bbox: minx (left), miny (top), maxx (right), maxy (bottom)
 	unsigned iz = 0, ix = 0, iy = 0;
 	choose_first_zoom(file_bbox, file_bbox1, file_bbox2, readers, &iz, &ix, &iy, minzoom, buffer);
+	// initial tile is normally 0/0/0 but can be iz/ix/iy if limited to one tile
 	if (justx >= 0) { // requested a single tile
 		iz = minzoom;
 		ix = justx;
@@ -2253,7 +2255,6 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 
 	std::atomic<long long> geompos(0);
 
-	/* initial tile is normally 0/0/0 but can be iz/ix/iy if limited to one tile */
 	long long estimated_complexity = 0;  // to be replaced after writing the data
 	fwrite_check(&estimated_complexity, sizeof(estimated_complexity), 1, geomfile, &geompos, fname);
 	serialize_int(geomfile, iz, &geompos, fname);
@@ -2261,6 +2262,7 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 	serialize_uint(geomfile, iy, &geompos, fname);
 
 	// split, sort, then merge geometries based on indices
+	// sorted data are in geomfile, indexfile; geomps contains the total size
 	radix(readers, CPUS, geomfile, indexfile, tmpdir, &geompos, maxzoom, basezoom, droprate, gamma);
 
 	/* end of tile */
@@ -2881,6 +2883,13 @@ std::pair<int, metadata> read_input(std::vector<source> &sources, char *fname, i
 		ai->second.maxzoom = maxzoom;
 	}
 	metadata m = make_metadata(fname, minzoom, maxzoom, minlat, minlon, maxlat, maxlon, minlat2, minlon2, maxlat2, maxlon2, midlat, midlon, attribution, merged_lm, true, description, !prevent[P_TILE_STATS], attribute_descriptions, "tippecanoe", commandline, strategies, basezoom, droprate, retain_points_multiplier);
+	if (global_bbox.initialized) { // temporary
+		m.euclidean_rescaled = true;
+		m.offx = global_bbox.minx;
+		m.offy = global_bbox.miny;
+		m.scale = global_bbox.scale;
+	}
+
 	if (outdb != NULL) {
 		mbtiles_write_metadata(outdb, m, forcetable);
 	} else {

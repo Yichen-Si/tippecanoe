@@ -46,10 +46,11 @@ bool parse_header(const std::string& header_line, csv_columns& cols) {
 		if (lower == "y" || lower == "lat" || (lower.find("latitude") != std::string::npos)) {
 			cols.latcol = i;
 			find_y++;
-		}
-		if (lower == "x" || lower == "lon" || lower == "lng" || lower == "long" || (lower.find("longitude") != std::string::npos)) {
+		} else if (lower == "x" || lower == "lon" || lower == "lng" || lower == "long" || (lower.find("longitude") != std::string::npos)) {
 			cols.loncol = i;
 			find_x++;
+		} else {
+			cols.full_keys.push_back(std::make_shared<std::string>(cols.header[i]));
 		}
 	}
     return find_x == 1 && find_y == 1;
@@ -93,10 +94,7 @@ void process_csv_line(const std::string& line, size_t seq, const csv_columns& co
     drawvec dv;
     dv.push_back(draw(VT_MOVETO, x, y));
 
-    std::vector<std::shared_ptr<std::string>> full_keys;
     std::vector<serial_val> full_values;
-    key_pool key_pool;
-
     // Process all columns except lat/lon
     for (size_t i = 0; i < fields.size(); i++) {
         if (i != (size_t)cols.latcol && i != (size_t)cols.loncol) {
@@ -112,8 +110,6 @@ void process_csv_line(const std::string& line, size_t seq, const csv_columns& co
                 sv.type = mvt_string;
             }
             sv.s = fields[i];
-
-            full_keys.push_back(key_pool.pool(cols.header[i]));
             full_values.push_back(sv);
         }
     }
@@ -129,7 +125,7 @@ void process_csv_line(const std::string& line, size_t seq, const csv_columns& co
     sf.seq = *(sst.layer_seq);
     sf.geometry = dv;
     sf.t = 1;  // POINT
-    sf.full_keys = full_keys;
+    sf.full_keys = cols.full_keys;
     sf.full_values = full_values;
 
     serialize_feature(&sst, sf, layername);

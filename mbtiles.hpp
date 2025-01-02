@@ -39,12 +39,14 @@ struct metadata {
 	int version;
 	std::string type;
 	std::string format;
+	bool euclidean_rescaled = false;
 
 	int minzoom;
 	int maxzoom;
 
 	double minlat, minlon, maxlat, maxlon;
 	double minlat2, minlon2, maxlat2, maxlon2;  // antimeridian-aware
+	double offx, offy, scale;
 
 	double center_lon, center_lat;
 	int center_z;

@@ -82,14 +82,15 @@ struct globalbbx {
 	double minx, miny, maxx, maxy;
 	bool initialized = false;
 	double scale;
+	// not using the whole range in case of wraparound rendering
+	double dmax = (double) std::numeric_limits<uint32_t>::max() * .99;
+
 	globalbbx() : minx(0), miny(0), maxx((double) ((1LL<<32)-1)), maxy((double) ((1LL<<32)-1)) {}
 	globalbbx(double _minx, double _miny, double _maxx, double _maxy) : minx(_minx), miny(_miny), maxx(_maxx), maxy(_maxy) {
-		double dmax = (double) std::numeric_limits<uint32_t>::max();
 		scale = dmax / std::max(maxx - minx, maxy - miny);
 		initialized = true;
 	}
 	void set_scale() {
-		double dmax = (double) std::numeric_limits<uint32_t>::max();
 		scale = dmax / std::max(maxx - minx, maxy - miny);
 		initialized = true;
 	}
@@ -112,7 +113,6 @@ struct globalbbx {
 		if (*oy >= n) *oy = n - 1;
 	}
 	void project2tile(double x, double y, int zoom, long long *ox, long long *oy) {
-		double dmax = (double) std::numeric_limits<uint32_t>::max();
 		assert(initialized);
 		long long n = 1LL << zoom;
 		*ox = std::round(n * (shift_and_scale_x(x)/dmax));

@@ -15,6 +15,7 @@ struct csv_columns {
     ssize_t loncol;
     std::vector<std::string> header;
     char delimiter = '\0';
+    std::vector<std::shared_ptr<std::string>> full_keys;
 };
 
 bool parse_header(const std::string& header_line, csv_columns& cols);

@@ -412,7 +412,7 @@ static void add_scaled_node(struct reader *r, serialization_state *sst, draw g) 
 	fwrite_check((char *) &n, sizeof(struct node), 1, r->nodefile, &r->nodepos, sst->fname);
 }
 
-// called from frontends
+// called from frontends, serialize a single feature
 int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::string const &layername) {
 	struct reader *r = &(*sst->readers)[sst->segment];
 	key_pool key_pool;
@@ -422,6 +422,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 	sf.bbox[2] = LLONG_MIN;
 	sf.bbox[3] = LLONG_MIN;
 
+	// update reader min/max coordinates (bbox)
 	for (size_t i = 0; i < sf.geometry.size(); i++) {
 		if (sf.geometry[i].op == VT_MOVETO || sf.geometry[i].op == VT_LINETO) {
 			// standard -180 to 180 world plane
@@ -456,7 +457,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 	// try to remind myself that the geometry in this function is in SCALED COORDINATES
 	drawvec scaled_geometry = sf.geometry;
 	sf.geometry.clear();
-	scale_geometry(sst, sf.bbox, scaled_geometry);
+	scale_geometry(sst, sf.bbox, scaled_geometry); // geometry_scale = 32 - (full_detail + maxzoom), likely to be 0 i.e. no scaling
 
 	// This has to happen after scaling so that the wraparound detection has happened first.
 	// Otherwise the inner/outer calculation will be confused by bad geometries.
@@ -473,9 +474,9 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 			scaled_geometry = clip_point(scaled_geometry, SHIFT_RIGHT(c.minx), SHIFT_RIGHT(c.miny), SHIFT_RIGHT(c.maxx), SHIFT_RIGHT(c.maxy));
 		}
 
-		scaled_geometry = remove_noop(scaled_geometry, sf.t, 0);
+		scaled_geometry = remove_noop(scaled_geometry, sf.t, 0); // for line/polygon: rm empty linetos/movetos
 
-		sf.bbox[0] = LLONG_MAX;
+		sf.bbox[0] = LLONG_MAX; // ???
 		sf.bbox[1] = LLONG_MAX;
 		sf.bbox[2] = LLONG_MIN;
 		sf.bbox[3] = LLONG_MIN;
@@ -675,6 +676,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 		*(sst->area_sum) += extent;
 	}
 
+	// coordinates -> spatial index
 	unsigned long long bbox_index;
 	long long midx, midy;
 
@@ -752,6 +754,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 		sf.index = 0;
 	}
 
+	// update layer stats
 	if (sst->layermap->count(layername) == 0) {
 		sst->layermap->emplace(layername, layermap_entry(sst->layermap->size()));
 	}
@@ -774,7 +777,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 		exit(EXIT_IMPOSSIBLE);
 	}
 
-	for (auto &kv : set_attributes) {
+	for (auto &kv : set_attributes) { // specified by user --set-attribute
 		bool found = false;
 		for (size_t i = 0; i < sf.full_keys.size(); i++) {
 			if (*sf.full_keys[i] == kv.first) {
@@ -793,7 +796,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 	for (ssize_t i = (ssize_t) sf.full_keys.size() - 1; i >= 0; i--) {
 		coerce_value(*sf.full_keys[i], sf.full_values[i].type, sf.full_values[i].s, sst->attribute_types);
 
-		if (prevent[P_SINGLE_PRECISION]) {
+		if (prevent[P_SINGLE_PRECISION]) { // double -> float if integer
 			if (sf.full_values[i].type == mvt_double) {
 				// don't coerce integers to floats, since that is counterproductive
 				if (sf.full_values[i].s.find('.') != std::string::npos) {
@@ -802,7 +805,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 			}
 		}
 
-		if (*sf.full_keys[i] == attribute_for_id) {
+		if (*sf.full_keys[i] == attribute_for_id) { // if the attribute is to be used as feature ID
 			if (sf.full_values[i].type != mvt_double && !additional[A_CONVERT_NUMERIC_IDS]) {
 				static bool warned = false;
 
@@ -852,7 +855,7 @@ int serialize_feature(struct serialization_state *sst, serial_feature &sf, std::
 		}
 	}
 
-	if (!sst->filters) {
+	if (!sst->filters) { // add key,val to mbtile tile stats
 		for (size_t i = 0; i < sf.full_keys.size(); i++) {
 			auto ts = sst->layermap->find(layername);
 			add_to_tilestats(ts->second.tilestats, *sf.full_keys[i], sf.full_values[i]);

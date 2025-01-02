@@ -95,6 +95,11 @@ std::string metadata_to_pmtiles_json(metadata m) {
 	out(state, "type", m.type);
 	out(state, "description", m.description);
 	out(state, "version", std::to_string(m.version));
+	if (m.euclidean_rescaled) { // temporary
+		std::string offs = std::to_string(m.offx) + "," + std::to_string(m.offy);
+		out(state, "euclidean_offset", offs);
+		out(state, "euclidean_scale", std::to_string(m.scale));
+	}
 	if (m.attribution.size() > 0) {
 		out(state, "attribution", m.attribution);
 	}

@@ -328,6 +328,7 @@ void euclidean2tile(double x, double y, int zoom, long long *ox, long long *oy) 
 
 void tile2euclidean(long long x, long long y, int zoom, double *ox, double *oy) {
     long long n = 1LL << zoom;
-    *ox = 1. * x / n * std::numeric_limits<uint32_t>::max();
-    *oy = 1. * y / n * std::numeric_limits<uint32_t>::max();
+	double dmax = (double) std::numeric_limits<uint32_t>::max();
+    *ox = 1. * x / n * dmax;
+    *oy = 1. * y / n * dmax;
 }

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <iostream>
 #include <sqlite3.h>
 #include <cmath>
 #include <climits>
@@ -539,6 +540,26 @@ void mbtiles_write_metadata(sqlite3 *db, const metadata &m, bool forcetable) {
 		}
 	}
 	sqlite3_free(sql);
+
+	// temporary
+	if (m.euclidean_rescaled) {
+		sql = sqlite3_mprintf("INSERT INTO metadata (name, value) VALUES ('euclidean_offset','%.f,%f');", m.offx, m.offy);
+		if (sqlite3_exec(db, sql, NULL, NULL, &err) != SQLITE_OK) {
+			fprintf(stderr, "set Euclidean offsets: %s\n", err);
+			if (!forcetable) {
+				exit(EXIT_SQLITE);
+			}
+		}
+		sqlite3_free(sql);
+		sql = sqlite3_mprintf("INSERT INTO metadata (name, value) VALUES ('euclidean_scale',%f);", m.scale);
+		if (sqlite3_exec(db, sql, NULL, NULL, &err) != SQLITE_OK) {
+			fprintf(stderr, "set Euclidean scale: %s\n", err);
+			if (!forcetable) {
+				exit(EXIT_SQLITE);
+			}
+		}
+		sqlite3_free(sql);
+	}
 
 	sql = sqlite3_mprintf("INSERT INTO metadata (name, value) VALUES ('type', %Q);", m.type.c_str());
 	if (sqlite3_exec(db, sql, NULL, NULL, &err) != SQLITE_OK) {
